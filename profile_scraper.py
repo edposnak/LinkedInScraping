@@ -176,10 +176,18 @@ class ProfileScraper(Thread):
 
                     # Get the date range of the job position
                     try:
+                        summary_element = job_position.find_element_by_class_name('pv-entity__summary-info')
+                        # title_elements = summary_element.find_elements_by_tag_name('h3')
+                        title_element = summary_element.find_element_by_class_name('t-16')
+                        title = title_element.text
+                        company_element = summary_element.find_element_by_class_name('pv-entity__secondary-title')
+                        company = company_element.text
+
                         date_range_element = job_position.find_element_by_class_name('pv-entity__date-range')
                         date_range_spans = date_range_element.find_elements_by_tag_name('span')
                         date_range = date_range_spans[1].text
 
+                        print(f"{profile_name} was {title} at {company} from {date_range}")
                         job_positions_data_ranges.append(date_range)
                     except:
                         pass
