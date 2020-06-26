@@ -1,104 +1,55 @@
 import sys
-import time
-import xlsxwriter
-from configparser import ConfigParser
 
 from profile_scraper import ProfileScraper
 from utils import boolean_to_string_xls, date_to_string_xls, message_to_user, chunks
 
-# Loading of configurations
-config = ConfigParser()
-config.read('config.ini')
+import concurrent.futures
 
-headless_option = len(sys.argv) >= 2 and sys.argv[1] == 'HEADLESS'
+if len(sys.argv) < 3:
+    print(f"usage: {sys.argv[0]} linkedin_username linkedin_password [HEADLESS]")
+    exit(-1)
+linkedin_credentials = (sys.argv[1], sys.argv[2])
+headless_option = len(sys.argv) > 3 and sys.argv[3] == '--headless'
 
-entries = []
-for entry in open(config.get('profiles_data', 'input_file_name'), "r"):
-    entries.append(entry.strip())
+urls_filename = 'urls_to_scrape.txt'
+urls_to_scrape = [entry.strip() for entry in open(urls_filename, 'r')]
+#################################
+# DEBUG
+urls_to_scrape = [
+    'https://www.linkedin.com/in/jennifergunther/',
+    'https://www.linkedin.com/in/jerrysandoval/',
+    'https://www.linkedin.com/in/smallbusinessadvocate/'
+]
+#################################
+urls_to_scrape = [f"{e}/" if not e.endswith('/') else e for e in urls_to_scrape]
+if not urls_to_scrape: raise ValueError(f"No entries found in {urls_filename}")
 
-if len(entries) == 0:
-    print("Please provide an input.")
-    sys.exit(0)
-
+# when running headless we can create multiple threads to run in parallel and divide the entries into chunks
+MAX_THREADS = 4
 if headless_option:
-    grouped_entries = chunks(entries, len(entries) // int(config.get('system', 'max_threads')))
+    chunked_urls = chunks(urls_to_scrape, len(urls_to_scrape) // MAX_THREADS)
+    scrapers = [ProfileScraper(i + 1, chunk_of_urls, linkedin_credentials, headless_option) for i, chunk_of_urls in enumerate(chunked_urls)]
+    print(f"Starting {len(scrapers)} parallel scrapers.")
+    # with concurrent.futures.ThreadPoolExecutor() as executor:
+    #     futures = { executor.submit(self.scrape_some): scraper for scraper in scrapers }
+    #     for f in concurrent.futures.as_completed(futures):
+    #         print(f"{f.result()}", end='', flush=True)
+
+    for scraper in scrapers: scraper.start()
+    scraping_results = []
+    for scraper in scrapers:
+        scraper.join()
+        scraping_results.extend(scraper.results)
 else:
-    grouped_entries = [entries]
-
-if len(grouped_entries) > 1:
-    print(f"Starting {len(grouped_entries)} parallel scrapers.")
-else:
-    print("Starting scraping...")
-
-scrapers = []
-for entries_group in grouped_entries:
-    scrapers.append(ProfileScraper(len(scrapers)+1, entries_group, config, headless_option))
-
-for scraper in scrapers:
+    scraper = ProfileScraper(1, urls_to_scrape, linkedin_credentials, headless_option)
     scraper.start()
-
-for scraper in scrapers:
     scraper.join()
+    scraping_results = scraper.results
 
-scraping_results = []
-for scraper in scrapers:
-    scraping_results.extend(scraper.results)
-
-# Generation of XLS file with profiles data
-output_file_name = config.get('profiles_data', 'output_file_name')
-if config.get('profiles_data', 'append_timestamp') == 'Y':
-    output_file_name_splitted = output_file_name.split('.')
-    output_file_name = "".join(output_file_name_splitted[0:-1]) + "_" + str(int(time.time())) + "." + \
-                       output_file_name_splitted[-1]
-
-workbook = xlsxwriter.Workbook(output_file_name)
-worksheet = workbook.add_worksheet()
-
-headers = ['Name', 'Email', 'Skills', 'Company', 'Industry', 'Job Title', 'City', 'Country',
-           'DATE FIRST JOB EVER', 'DATE FIRST JOB AFTER BEGINNING POLIMI', 'DATE FIRST JOB AFTER ENDING POLIMI',
-           'JOB WITHIN 3 MONTHS', 'JOB WITHIN 5 MONTHS', 'JOB WITHIN 6 MONTHS', 'JOB WHILE STUDYING',
-           'MORE THAN ONE JOB POSITION', 'NOT CURRENTLY EMPLOYED', 'NEVER HAD JOBS']
-
-# Set the headers of xls file
-for h in range(len(headers)):
-    worksheet.write(0, h, headers[h])
-
-for i in range(len(scraping_results)):
-
-    scraping_result = scraping_results[i]
-
+for scraping_result in scraping_results:
     if scraping_result.is_error():
-        data = ['Error_' + scraping_result.message] * len(headers)
+        print(f"Failed to scrape {scraping_result.message}") # TODO put URL
     else:
-        p = scraping_result.profile
-        data = [
-            p.profile_name,
-            p.email,
-            ",".join(p.skills),
-            p.current_job.company.name,
-            p.current_job.company.industry,
-            p.current_job.position,
-            p.current_job.location.city,
-            p.current_job.location.country,
-            date_to_string_xls(p.jobs_history.first_job_ever_date),
-            date_to_string_xls(p.jobs_history.date_first_job_after_beginning_university),
-            date_to_string_xls(p.jobs_history.date_first_job_after_ending_university),
-            boolean_to_string_xls(p.jobs_history.had_job_after_graduation_within_3_months),
-            boolean_to_string_xls(p.jobs_history.had_job_after_graduation_within_5_months),
-            boolean_to_string_xls(p.jobs_history.had_job_after_graduation_within_6_months),
-            boolean_to_string_xls(p.jobs_history.had_job_while_studying),
-            boolean_to_string_xls(p.jobs_history.more_than_a_job_now),
-            boolean_to_string_xls(p.jobs_history.is_currently_unemployed),
-            boolean_to_string_xls(p.jobs_history.never_had_jobs)
-        ]
+        print(scraping_result.profile)
 
-    for j in range(len(data)):
-        worksheet.write(i + 1, j, data[j])
-
-workbook.close()
-
-if any(scraper.interrupted for scraper in scrapers):
-    message_to_user("The scraping didnt end correctly due to Human Check. The excel file was generated but it will "
-                    "contain some entries reporting an error string.", config)
-else:
-    message_to_user('Scraping successfully ended.', config)
+message_to_user(f"Successfully scraped {len(scraping_results)} of {len(urls_to_scrape)} URLs", speak=True)

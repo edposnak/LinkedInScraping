@@ -1,19 +1,9 @@
 import re
 import pyttsx3
 from datetime import datetime
-from selenium import webdriver
-
-from job_history_summary import JobHistorySummary
 
 
-class HumanCheckException(Exception):
-    """Human Check from Linkedin"""
-    pass
-
-
-class CannotProceedScrapingException(Exception):
-    """Human Check from Linkedin during an headless mode execution"""
-    pass
+class HumanCheckException(Exception): pass
 
 
 class Location:
@@ -31,49 +21,6 @@ class Location:
                 self.country = location.split(',')[-1]
             except:
                 pass
-
-
-class Company:
-    def __init__(self, name='N/A', industry='N/A'):
-        self.name = name
-        self.industry = industry
-
-
-class Job:
-    def __init__(self, company=Company(), position='N/A', location=Location()):
-        self.company = company
-        self.position = position
-        self.location = location
-
-    def __set__(self, instance, value):
-        self.instance = value
-
-
-class Profile:
-    def __init__(self, profile_name, email, skills, last_job=Job(), job_history_summary=JobHistorySummary()):
-        self.profile_name = profile_name
-        self.email = email
-        self.skills = skills
-        self.current_job = last_job if not job_history_summary.is_currently_unemployed else Job()
-        self.jobs_history = job_history_summary
-
-
-def linkedin_logout(browser):
-    browser.get('https://www.linkedin.com/m/logout')
-
-
-def linkedin_login(browser, username, password):
-    browser.get('https://www.linkedin.com/uas/login')
-
-    username_input = browser.find_element_by_id('username')
-    username_input.send_keys(username)
-
-    password_input = browser.find_element_by_id('password')
-    password_input.send_keys(password)
-    try:
-        password_input.submit()
-    except:
-        pass
 
 
 def chunks(lst, n):
@@ -120,27 +67,12 @@ def date_to_string_xls(date):
     return datetime.strftime(date, "%b-%y")
 
 
-def message_to_user(message, config):
+def message_to_user(message, speak=True):
     print(message)
 
-    if config.get('system', 'speak') == 'Y':
+    if speak:
         engine = pyttsx3.init()
         engine.say(message)
         engine.runAndWait()
 
 
-def get_browser_options(headless_option, config):
-
-    options = webdriver.ChromeOptions()
-
-    options.add_argument('--no-sandbox')
-
-    if headless_option:
-        options.add_argument('--headless')
-
-    options.add_argument('--disable-dev-shm-usage')
-
-    if not config.get('system', 'chrome_path') == '':
-        options.binary_location = r"" + config.get('system', 'chrome_path')
-
-    return options
