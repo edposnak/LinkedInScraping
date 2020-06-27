@@ -17,8 +17,8 @@ urls_to_scrape = [entry.strip() for entry in open(urls_filename, 'r')]
 # DEBUG
 urls_to_scrape = [
     'https://www.linkedin.com/in/jennifergunther/',
-    'https://www.linkedin.com/in/jerrysandoval/',
-    'https://www.linkedin.com/in/smallbusinessadvocate/'
+    # 'https://www.linkedin.com/in/jerrysandoval/',
+    # 'https://www.linkedin.com/in/smallbusinessadvocate/'
 ]
 #################################
 urls_to_scrape = [f"{e}/" if not e.endswith('/') else e for e in urls_to_scrape]
@@ -50,6 +50,8 @@ for scraping_result in scraping_results:
     if scraping_result.is_error():
         print(f"Failed to scrape {scraping_result.message}") # TODO put URL
     else:
-        print(scraping_result.profile)
+        print(scraping_result.employee)
+        for job in scraping_result.employee.job_history:
+            print(job.company.full_details())
 
 message_to_user(f"Successfully scraped {len(scraping_results)} of {len(urls_to_scrape)} URLs", speak=True)
