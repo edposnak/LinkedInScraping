@@ -182,7 +182,7 @@ class LinkedinCompanyScraper(LinkedinScraper):
         title = ' '.join(title_co.split(' at ')[0:-1]) if ' at ' in title_co else title_co
 
         jh = JobHistory.from_single_position_title(company, title)
-        if employee.job_history.jobs:
+        if employee.job_history and employee.job_history.jobs:
             employee.job_history.add_job(jh.jobs[0])
         else:
             employee.job_history = jh
