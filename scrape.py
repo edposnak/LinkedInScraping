@@ -1,123 +1,80 @@
-import re
 import sys
 
-# TODO use concurrent.futures
-import concurrent.futures
-# with concurrent.futures.ThreadPoolExecutor() as executor:
-#     futures = { executor.submit(run_scraper, scraper_class, urls_to_scrape, linkedin_credentials, headless_option): scraper for scraper in scrapers }
-#     for f in concurrent.futures.as_completed(futures):
-#         print(f"{f.result()}", end='', flush=True)
+import argparse
+import traceback
+
 from linkedin_company_scraper import LinkedinCompanyScraper
 from linkedin_person_scraper import LinkedinPersonScraper
 
+DEFAULT_LINKEDIN_USER, DEFAULT_LINKEDIN_PASSWORD = 'ed.posnak@gmail.com', 'scrapers1'
 
-def is_valid_url(url):
-    regex = re.compile(
-        r'^(?:http|ftp)s?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
-        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    return re.match(regex, url) is not None
-
-def chunks(lst, n):
-    if n == 0:
-        return [lst]
-    """Yield successive n-sized chunks from lst."""
-    return [lst[i:i + n] for i in range(0, len(lst), n)]
-
-MAX_THREADS = 4
-def run_parallel_scrapers(scraper_class, urls_to_scrape, linkedin_credentials, headless_option):
-    chunked_urls = chunks(urls_to_scrape, len(urls_to_scrape) // MAX_THREADS)
-    scrapers = [scraper_class(i + 1, chunk_of_urls, linkedin_credentials, headless_option) for i, chunk_of_urls in enumerate(chunked_urls)]
-    print(f"Starting {len(scrapers)} parallel scrapers.")
-    for scraper in scrapers: scraper.start()
-    scraping_results = []
-    for scraper in scrapers:
-        scraper.join()
-        scraping_results.extend(scraper.results)
-    return scraping_results
-
-def run_single_scraper(scraper_class, urls_to_scrape, linkedin_credentials, headless_option):
-    scraper = scraper_class(1, urls_to_scrape, linkedin_credentials, headless_option)
+def scrape_one(scraper_class, url_to_scrape, p_args):
+    scraper = scraper_class(1, [url_to_scrape], (p_args.user, p_args.password), p_args.headless)
     scraper.start()
     scraper.join()
-    return scraper.results
 
-def scrape(scraper_class, company_urls_to_scrape, linkedin_credentials, headless_option):
-    args = [scraper_class, company_urls_to_scrape, linkedin_credentials, headless_option]
-    # when running headless we can create multiple threads to run in parallel
-    scraping_results = run_parallel_scrapers(*args) if headless_option else run_single_scraper(*args)
-    return scraping_results
+    first_result = scraper.results[0]
+    if first_result.error:
+        print(f"ERROR scraping {url_to_scrape}: {first_result.error}")
+    return first_result.data
 
-####################################################################################################################################
+def scrape_many(scraper_class, urls_to_scrape, p_args):
+    scraper = scraper_class(1, urls_to_scrape, (p_args.user, p_args.password), p_args.headless)
+    scraper.start()
+    scraper.join()
 
-
-if len(sys.argv) < 3:
-    print(f"usage: {sys.argv[0]} username password [--headless]")
-    exit(-1)
-linkedin_credentials = (sys.argv[1], sys.argv[2])
-headless_option = len(sys.argv) > 3 and sys.argv[3] == '--headless'
-
-# TODO -u username -p password -l linkedin_url_to_scrape (or -f urls_to_scrape_file) -h (== --headless)
-
-#################################
-# DEBUG company scraper
-# company_results = scrape(LinkedinCompanyScraper, ['https://www.linkedin.com/company/power-pro-leasing/'], linkedin_credentials, False)
-# # company_results = scrape(LinkedinCompanyScraper, ['https://www.linkedin.com/school/colorado-state-university/'], linkedin_credentials, False)
-# for scraping_result in company_results:
-#     if scraping_result.error:
-#         print(f"{scraping_result.error} scraping {scraping_result.url}")
-#     else:
-#         company = scraping_result.data
-#         print(company.full_details())
-#
-# exit(0)
-#################################
+    for r in scraper.results:
+        if r.error: print(f"ERROR scraping {r.url}: {r.error}")
 
 
-urls_filename = 'urls_to_scrape.txt'
-#################################
-# DEBUG
-urls_provided = [
-    'https://www.linkedin.com/in/jennifergunther/',
-    'https://www.linkedin.com/in/jerrysandoval/',
-    'https://www.linkedin.com/in/smallbusinessadvocate/'
-]
-#################################
-urls_provided = [entry.strip() for entry in open(urls_filename, 'r')]
-urls_provided = [f"{e}/" if not e.endswith('/') else e for e in urls_provided]
-
-urls_to_scrape = [u for u in urls_provided if is_valid_url(u)]
-if not urls_to_scrape: raise ValueError(f"No valid URLs found in {urls_filename}")
+    return [ r.data for r in scraper.results if not r.error ] # return only the valid results
 
 
-employee_results = scrape(LinkedinPersonScraper, urls_to_scrape, linkedin_credentials, headless_option)
+def main():
+    parser = argparse.ArgumentParser(description='Scrape LinkedIn profiles and company pages')
+    parser.add_argument('url_to_scrape', help='the LinkedIn URL to scrape')
+    parser.add_argument('-u', '--user', default=DEFAULT_LINKEDIN_USER, help='LinkedIn username')
+    parser.add_argument('-p', '--password', default=DEFAULT_LINKEDIN_PASSWORD, help='LinkedIn password')
+    parser.add_argument('-c', '--companies', action='store_true', help='also scrape companies found in job history')
+    parser.add_argument('-g', '--headless', action='store_true', help='use headless browser to scrape')
+    parser.add_argument('-n', '--nosave', action='store_true', help='do not save records to the db')
 
-for scraping_result in employee_results:
-    if scraping_result.error:
-        print(f"{scraping_result.error} scraping {scraping_result.url}")
+    p_args = parser.parse_args()
+
+    if p_args.nosave: print(f"****\n-n NOT SAVING RESULTS TO DB\n****\n")
+
+    # cheap detection of whether it's a company page url or a profile url
+    if any([s in p_args.url_to_scrape for s in 'company school results'.split()]):
+        company = scrape_one(LinkedinCompanyScraper, p_args.url_to_scrape, p_args)
+        if not p_args.nosave: company.save_to_db()
     else:
-        employee = scraping_result.data
-        try:
-            company_urls_to_scrape = [ job.company.linkedin_url for job in employee.job_history ]
-            print(f"scraping {len(company_urls_to_scrape)} companies for {employee.name}")
-            company_results = scrape(LinkedinCompanyScraper, company_urls_to_scrape, linkedin_credentials, headless_option)
+        person = scrape_one(LinkedinPersonScraper, p_args.url_to_scrape, p_args)
+        if person:
+            print(person)
+            if not p_args.nosave: person.save_to_db()
 
-            for scraping_result in company_results:
-                if scraping_result.error:
-                    print(f"{scraping_result.error} scraping {scraping_result.url}")  # TODO put URL
-                else:
-                    company = scraping_result.data
-                    for job in employee.job_history: # merge company data
-                        if job.company.linkedin_url == company.linkedin_url: job.company.merge(company)
+            if p_args.companies: # also scrap the companies from the person's job history
+                try:
+                    urls_to_scrape = { job.company.linkedin_url for job in person.job_history } # dedup
+                    if urls_to_scrape:
+                        print(f"scraping {len(urls_to_scrape)} companies from {person.name}'s job history")
+                        companies = scrape_many(LinkedinCompanyScraper, urls_to_scrape, p_args)
+                        print(f"successfully scraped {len(companies)}/{len(urls_to_scrape)} companies")
+                        for company in companies:
+                            try:
+                                print(company)
+                                if not p_args.nosave: company.save_to_db()
+                            except Exception as e:
+                                print(f"saving companies raised {e}")
+                                with open(f"models_errors.txt", "a") as errlog:
+                                    traceback.print_exc(file=errlog)
+
+                except Exception as e:
+                    print(f"scraping companies raised {e}")
 
 
-        except Exception as e:
-            print(f"scraping companies raised {e}")
 
-        print(employee)
-        for job in employee.job_history: print(job.company.full_details())
 
-print(f"Successfully scraped {len(employee_results)} of {len(urls_provided)} URLs")
+if __name__ == "__main__":
+    main()
+

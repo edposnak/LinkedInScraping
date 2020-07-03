@@ -3,9 +3,11 @@ import time
 
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.common.action_chains import ActionChains
+
 
 from linkedin_scraper import LinkedinScraper, ScrapingResult
-from models import Employee, ContactInfo, Skills, Company, Position, Job, JobHistory, Recommendations, Recommendation
+from models import Person, ContactInfo, Skills, Company, Position, Job, JobHistory, Recommendations, Recommendation
 
 
 class JobSummaryNotFoundException(Exception): pass
@@ -15,28 +17,42 @@ class LinkedinPersonScraper(LinkedinScraper):
         super(LinkedinPersonScraper, self).__init__(*args)
 
     def scrape(self, linkedin_profile_url):
-        profile_name = self.browser.find_element_by_class_name('pv-top-card--list').find_element_by_tag_name('li').text.strip()
-        employee = Employee(profile_name, linkedin_profile_url)
+        # <section id="ember54" class="pv-top-card artdeco-card ember-view"><!---->
+        top_card_section = self.browser.find_element_by_class_name('pv-top-card')
 
-        print(f"contact info for {employee.name}")
-        employee.contact_info = self.scrape_contact_info()
-        print(f"{employee.name} {employee.contact_info}")
+        # <ul class="pv-top-card--list inline-flex align-items-center">
+        top_card_list_elements = top_card_section.find_elements_by_class_name('pv-top-card--list')
+        #     <li class="inline t-24 t-black t-normal break-words"> Luther Knox </li>
+        profile_name = top_card_list_elements[0].find_element_by_tag_name('li').text.strip()
+
+        person = Person(profile_name, linkedin_profile_url)
+
+        # <h2 class="mt1 t-18 t-black t-normal break-words"> Creative Director at LiveIntent, Inc. </h2>
+        person.summary = top_card_section.find_element_by_tag_name('h2').text.strip()
+
+        # <li class="t-16 t-black t-normal inline-block"> New York, New York </li>
+        person.location = top_card_list_elements[1].find_element_by_tag_name('li').text.strip()
+
+        print(f"contact info for {person.name}")
+        person.contact_info = self.scrape_contact_info()
+        print(f"{person.name} {person.contact_info}")
 
         self.scroll_to_bottom_to_load_all_content()
-        print(f"scraping skills for {employee.name}")
-        employee.skills = self.scrape_skills()
-        print(f"{employee.name} {employee.skills}")
+        print(f"scraping skills for {person.name}")
+        person.skills = self.scrape_skills()
+        print(f"{person.name} {person.skills}")
 
-        print(f"scraping job_history for {employee.name}")
+        print(f"scraping job_history for {person.name}")
         self.click_on_show_more_jobs()
-        employee.job_history = self.scrape_job_history()
-        print(f"{employee.name} {employee.job_history}")
+        person.job_history = self.scrape_job_history()
+        print(f"{person.name} {person.job_history}")
 
-        print(f"scraping recommendations for {employee.name}")
-        employee.recommendations = self.scrape_recommendations()
-        print(f"{employee.name} recommendations={employee.recommendations}")
+        print(f"scraping recommendations for {person.name}")
+        person.recommendations_given, person.recommendations_received = self.scrape_recommendations()
+        print(f"{person.name} recommendations_given={person.recommendations_given}")
+        print(f"{person.name} recommendations_received={person.recommendations_received}")
 
-        return ScrapingResult(employee, url=linkedin_profile_url)
+        return ScrapingResult(person, url=linkedin_profile_url)
 
     def scrape_contact_info(self, wait_for_modal_load_seconds=2):
         # click on 'Contact info' link to open up the modal
@@ -70,14 +86,21 @@ class LinkedinPersonScraper(LinkedinScraper):
         return result
 
     def scrape_skills(self, wait_for_skills_load_seconds=1):
-        # Click on "Show More" once (should bring up all skills)
-        self.browser.execute_script("document.getElementsByClassName('pv-skills-section__additional-skills')[0].click()")
-        time.sleep(wait_for_skills_load_seconds)
+        try:
+            # Click on "Show More" once (should bring up all skills)
+            # self.browser.execute_script("document.getElementsByClassName('pv-skills-section__additional-skills')[0].click()")
 
-        skills_list_element = self.browser.find_element_by_class_name('pv-skill-category-list__skills_list')
-        skills_list = [ e.text.strip() for e in skills_list_element.find_elements_by_class_name('pv-skill-category-entity__name-text') ]
+            more_skills_button = self.browser.find_element_by_class_name('pv-skills-section__additional-skills')
+            ActionChains(self.browser).move_to_element(more_skills_button).click(more_skills_button).perform()
 
-        return Skills(skills_list)
+            time.sleep(wait_for_skills_load_seconds)
+
+            skills_list_element = self.browser.find_element_by_class_name('pv-skill-category-list__skills_list')
+            skills_list = [ e.text.strip() for e in skills_list_element.find_elements_by_class_name('pv-skill-category-entity__name-text') ]
+
+            return Skills(skills_list)
+        except NoSuchElementException as e:
+            return Skills([]) # some people ain't got no skills
 
     def click_on_show_more_jobs(self, num_clicks=2, wait_for_jobs_load_seconds=1):
         try:
@@ -97,8 +120,7 @@ class LinkedinPersonScraper(LinkedinScraper):
             try:
                 # <a data-control-name="background_details_company" href="/company/cuboulder/"
                 a_tag = job_element.find_element_by_tag_name('a')
-                company_linkedin_url = a_tag.get_attribute('href')
-                job.company.linkedin_url = company_linkedin_url
+                job.company.linkedin_url = a_tag.get_attribute('href')
 
             except NoSuchElementException as e:
                 print(f"WARNING: No company linkedin_url a_tag was found under {job_element.tag_name} class={job_element.get_attribute('class')} for job {n+1}")
@@ -206,72 +228,117 @@ class LinkedinPersonScraper(LinkedinScraper):
         return duration
 
     def scrape_recommendations(self, wait_for_recommendations_load_seconds=1):
-        recommendations = Recommendations()
-
+        recommendations_given, recommendations_received = Recommendations(), Recommendations()
         try:
             # Find the recommendations section if it exists
             # <section class="pv-recommendations-section">
             recommendations_element = self.browser.find_element_by_class_name('pv-recommendations-section')
 
-            # Make sure you're under "Received" tab (not "Given" tab)
-            # First button is the received tab
-            # <button tabindex="-1" ...       Received (0) </button>
+            # First button is the Received tab, second button is the Given tab
+            received_tab_button, given_tab_button = recommendations_element.find_elements_by_css_selector("button.artdeco-tab")
 
-            received_tab_element = recommendations_element.find_element_by_css_selector("button.artdeco-tab")
-            if received_tab_element.text.strip() == 'Received (0)': return recommendations
-            # if there are no recommendations you might see this
-            # <p class="description t-16 t-black--light t-normal mt5"> Jerry hasn’t received any recommendations yet. </p>
+            print(f"RECOMMENDATIONS TO SCRAPE: {given_tab_button.text.strip()} {received_tab_button.text.strip()}")
 
-            # if the Received tab is hidden (i.e. tabindex="-1") click it, which will set tabindex="0" and load the received recommendations
-            if received_tab_element.get_attribute('tabindex') == '-1':
-                received_tab_element.click()
+            # if the Received tab is visible (i.e. aria-selected="selected") scrape it, then click the given_button to switch tabs and scrape Given
+            if received_tab_button.get_attribute('aria-selected') == 'true':
+                print(f"*** STARTED on the received tab")
+                recommendations_received = self.scrape_reco_list(received_tab_button)
+
+                # Now switch tabs to the Given recommendations
+                ActionChains(self.browser).move_to_element(given_tab_button).click(given_tab_button).perform()
                 time.sleep(wait_for_recommendations_load_seconds)
+                recommendations_given = self.scrape_reco_list(given_tab_button)
+            else: # if the Received tab is hidden (i.e. aria-selected="false") assume none received, and just get given
+                print(f"*** STARTED on the given tab")
+                recommendations_given = self.scrape_reco_list(given_tab_button)
 
-            # Click Show more if exists
-            # If there are more than 2 recommendations there will be a third button "Show more"
-            # <button class="pv-profile-section__see-more-inline pv-profile-section__text-truncate-toggle link link-without-hover-state"
-            # aria-controls="recommendation-list" aria-expanded="false" type="button">Show more
-            try:
-                more_button = recommendations_element.find_element_by_class_name('pv-profile-section__see-more-inline')
-                more_button.click()
+                # Now switch tabs to the Received recommendations
+                ActionChains(self.browser).move_to_element(received_tab_button).click(received_tab_button).perform()
                 time.sleep(wait_for_recommendations_load_seconds)
-            except NoSuchElementException as e:
-                pass # this button is often not found
+                recommendations_received = self.scrape_reco_list(received_tab_button)
 
-            # recommendations are a series of <li class="pv-recommendation-entity"> elements
-            print(f"found {len(recommendations_element.find_elements_by_class_name('pv-recommendation-entity'))} recommendations")
-            for rec_element in recommendations_element.find_elements_by_class_name('pv-recommendation-entity'):
-                recommendation = Recommendation()
 
-                # <a data-control-name="recommendation_details_profile" href=linkedin_profile_url_of_recommender
-                a_tag = rec_element.find_element_by_tag_name('a')
-                recommendation.linkedin_url = a_tag.get_attribute('href')
-
-                # <div class="pv-recommendation-entity__detail">
-                detail_element = a_tag.find_element_by_class_name('pv-recommendation-entity__detail')
-
-                #      <h3 class="t-16 t-black t-bold">Mike P Lewis</h3>
-                recommendation.name = detail_element.find_element_by_tag_name('h3').text.strip()
-
-                p_tags = detail_element.find_elements_by_tag_name('p')
-                #      <p class="pv-recommendation-entity__headline t-14 t-black t-normal pb1">CEO &amp; Co-founder of Onward</p>
-                recommendation.title_co = p_tags[0].text.strip()
-
-                #      <p class="t-12 t-black--light t-normal"> November 5, 2013, Mike P managed Jennifer directly </p>
-                rec_date_relationship = p_tags[1].text.strip()
-                parts = rec_date_relationship.split(',')
-                recommendation.date =  ','.join(parts[0:2]).strip()
-                recommendation.relationship = ''.join(parts[2:]).strip()
-
-                # only add Received recommendations (hidden recommendations have blank name, etc.)
-                if recommendation.name:
-                    recommendations.add(recommendation)
-                else: # if recommendation given matches any received mark them as reciprocal
-                    for r in recommendations:
-                        if r.linkedin_url == recommendation.linkedin_url: r.reciprocal = True
+            # mark recommendations as reciprocal if linkedin_url matches
+            for rg in recommendations_given:
+                for rr in recommendations_received:
+                    if rg.linkedin_url == rr.linkedin_url:
+                        rg.reciprocal = rr.reciprocal = True
 
         except Exception as e:
             print(f"scrape_recommendations() raised {e}")
+
+        return recommendations_given, recommendations_received
+
+
+    def scrape_reco_list(self, tab_button, wait_for_recommendations_load_seconds=1):
+        recommendations = Recommendations()
+        # recommendations_element = self.browser.find_element_by_class_name('pv-recommendations-section')
+
+        # button text tells how many recommendations there are, e.g. 'Received (0)':
+        num_recommendations = tab_button.text.strip()
+        print(f"   searching for {num_recommendations} recommendations")
+        if num_recommendations.endswith('(0)'): return recommendations
+
+        id_to_scrape = tab_button.get_attribute('aria-controls')
+        controlled_div_element = self.browser.find_element_by_id(id_to_scrape)
+
+        # Click Show more if the button exists
+        # If there are more than 2 recommendations there will be a third button "Show more"
+        # <button class="pv-profile-section__see-more-inline pv-profile-section__text-truncate-toggle link link-without-hover-state"
+        # aria-controls="recommendation-list" aria-expanded="false" type="button">Show more
+        showed_more = False # used to determine whether to click "show less" button
+        while True:
+            try:
+                more_inline_button = controlled_div_element.find_element_by_class_name('pv-profile-section__see-more-inline')
+                ActionChains(self.browser).move_to_element(more_inline_button).click(more_inline_button).perform()
+                showed_more = True
+                time.sleep(wait_for_recommendations_load_seconds)
+            except NoSuchElementException as e:
+                break # keep clicking until the button is not found
+
+        print(f"*** BEGIN scraping recos ...")
+
+        # recommendations are a series of <li class="pv-recommendation-entity"> elements found underneath the div controlled by the button
+        print(f"   found {len(controlled_div_element.find_elements_by_class_name('pv-recommendation-entity'))} recommendations")
+        for rec_element in controlled_div_element.find_elements_by_class_name('pv-recommendation-entity'):
+            recommendation = Recommendation()
+
+            # <a data-control-name="recommendation_details_profile" href=linkedin_profile_url_of_recommender
+            a_tag = rec_element.find_element_by_tag_name('a')
+            recommendation.linkedin_url = a_tag.get_attribute('href')
+
+            # <div class="pv-recommendation-entity__detail">
+            detail_element = a_tag.find_element_by_class_name('pv-recommendation-entity__detail')
+
+            #      <h3 class="t-16 t-black t-bold">Mike P Lewis</h3>
+            recommendation.name = detail_element.find_element_by_tag_name('h3').text.strip()
+
+            p_tags = detail_element.find_elements_by_tag_name('p')
+            #      <p class="pv-recommendation-entity__headline t-14 t-black t-normal pb1">CEO &amp; Co-founder of Onward</p>
+            recommendation.title_co = p_tags[0].text.strip()
+
+            #      <p class="t-12 t-black--light t-normal"> November 5, 2013, Mike P managed Jennifer directly </p>
+            #                  OR 'reported directly to Jennfier'
+            rec_date_relationship = p_tags[1].text.strip()
+            parts = rec_date_relationship.split(',')
+            recommendation.date = ','.join(parts[0:2]).strip()
+            recommendation.relationship = ''.join(parts[2:]).strip()
+
+            if recommendation.relationship and 'managed' in recommendation.relationship: recommendation.managed = True
+            if recommendation.relationship and 'reported directly' in recommendation.relationship: recommendation.reported_to = True
+
+            # only add recommendations with a name (hidden recommendations have blank name, etc.)
+            # TODO this doesn't happen anymore because we search the div controlled by the button
+            if recommendation.name:  # received recommendation
+                print(f"   ADDING recommendation {recommendation}")
+                recommendations.add(recommendation)
+            else:  # given recommendation
+                print(f"   SKIPPING recommendation with blank name")
+
+        # if showed_more:
+        #     print(f"   CLICKING show less button")
+        #     controlled_div_element.find_element_by_class_name('pv-profile-section__see-less-inline').click()
+        #     time.sleep(wait_for_recommendations_load_seconds)
 
         return recommendations
 
