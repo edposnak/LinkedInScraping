@@ -29,13 +29,11 @@ stopped = False
 def scrape_gen(db_polling_sleep_seconds=10):
     '''Generates URLs by polling the database for scrapes where last_scraped is NULL'''
     while not stopped:
-        print(f"   scrape_gen: stopped = {stopped}")
         scrape = Scrape.next_unscraped()
         if scrape:
             print(f"   scrape_gen: Got an unscraped {scrape.scrapable_type} URL! url={scrape.url} (scrape.id={scrape.id})")
             yield scrape
         else:
-            print(f"   scrape_gen: Got nothing going to sleep zzzzzz...")
             time.sleep(db_polling_sleep_seconds)
 
 def scrape_forever(scrapers, p_args):

@@ -31,6 +31,7 @@ class Person:
 
     def save_to_db(self):
         person_id = Person.find_or_create_in_db(self.name, self.linkedin_url, self.summary, self.location)
+        self.update_new_info_in_db(person_id)
 
         if self.contact_info: self.contact_info.save_to_db('Person', person_id)
 
@@ -43,16 +44,37 @@ class Person:
 
         return person_id
 
+    def update_new_info_in_db(self, person_id):
+        # check if we have new/better information on the person
+        rows = db_instance().exec_read('SELECT name, summary, location FROM people WHERE id = %s', (person_id,))
+        p_name, p_summary, p_location = rows[0]
+        new_info = {}
+        if not p_name and self.name: new_info['name'] = self.name
+        if not p_summary and self.name: new_info['summary'] = self.summary
+        if not p_location and self.name: new_info['location'] = self.location
+
+        if new_info:
+            print(f"UPDATE Person {self.name} person_id={person_id} with {new_info}")
+            updated_at = datetime.utcnow()
+            sql = '''
+                UPDATE people SET (name, summary, location, updated_at)
+                = (%s, %s, %s, %s)
+                WHERE people.id = %s
+                RETURNING id
+            '''
+            params = (p_name or self.name, p_summary or self.summary, p_location or self.location, updated_at, person_id)
+            _ = db_instance().exec_write(sql, params)
+
     @classmethod
     def find_or_create_in_db(cls, name, linkedin_url, summary, location=None):
         linkedin_url = canonize_linkedin_url(linkedin_url)
         '''does a quick creation of a person with just name and linkedin_url'''
         created_at = updated_at = datetime.utcnow()
         sql = '''
-        INSERT INTO people (name, linkedin_url, summary, location, created_at, updated_at) 
-        VALUES(%s, %s, %s, %s, %s, %s)
-        ON CONFLICT (linkedin_url) DO NOTHING
-        RETURNING id
+            INSERT INTO people (name, linkedin_url, summary, location, created_at, updated_at) 
+            VALUES(%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (linkedin_url) DO NOTHING
+            RETURNING id
         '''
         params = (name, linkedin_url, summary, location, created_at, updated_at)
         person_id = db_instance().exec_write(sql, params)
@@ -88,10 +110,10 @@ class ContactInfo:
         for channel, info in self.contact_points():
             created_at = updated_at = datetime.utcnow()
             sql = '''
-            INSERT INTO contact_points (channel, info, contactable_type, contactable_id, created_at, updated_at) 
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (channel, info) DO NOTHING
-            RETURNING id
+                INSERT INTO contact_points (channel, info, contactable_type, contactable_id, created_at, updated_at) 
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (channel, info) DO NOTHING
+                RETURNING id
             '''
             params = (channel, info, contactable_type, contactable_id, created_at, updated_at)
             cp_id = db_instance().exec_write(sql, params)
@@ -118,10 +140,10 @@ class Skills:
             created_at = updated_at = datetime.utcnow()
             #  ON CONFLICT ON CONSTRAINT (index_person_skills_on_person_id_and_skill_id) DO NOTHING
             sql = '''
-            INSERT INTO person_skills (person_id, skill_id, created_at, updated_at) 
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (person_id, skill_id) DO NOTHING
-            RETURNING id
+                INSERT INTO person_skills (person_id, skill_id, created_at, updated_at) 
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (person_id, skill_id) DO NOTHING
+                RETURNING id
             '''
             params = (person_id, skill_id, created_at, updated_at)
             ps_id = db_instance().exec_write(sql, params)
@@ -138,10 +160,10 @@ class Skills:
         created_at = updated_at = datetime.utcnow()
         # find_or_create skill (requires unique index on name column)
         sql = '''
-        INSERT INTO skills (name, created_at, updated_at) 
-        VALUES (%s, %s, %s) 
-        ON CONFLICT (name) DO NOTHING 
-        RETURNING id
+            INSERT INTO skills (name, created_at, updated_at) 
+            VALUES (%s, %s, %s) 
+            ON CONFLICT (name) DO NOTHING 
+            RETURNING id
         '''
         params = (name, created_at, updated_at)
         skill_id = db_instance().exec_write(sql, params)
@@ -176,15 +198,15 @@ class Recommendation:
 
     def save_to_db(self, person_id, person_is):
         # find or create the person giving the recommendation
-        other_id = Person.find_or_create_in_db(self.name, self.linkedin_url, self.title_co)
+        other_id = Person.find_or_create_in_db(self.name, self.linkedin_url, self.title_co) # self.title_co is the person's summary
         giver_id, receiver_id = (person_id, other_id) if person_is == 'giver' else (other_id, person_id)
 
         created_at = updated_at = datetime.utcnow()
         sql = '''
-        INSERT INTO recommendations (giver_id, receiver_id, title_co, date, relationship, reciprocal, managed, created_at, updated_at) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (giver_id, receiver_id) DO NOTHING 
-        RETURNING id
+            INSERT INTO recommendations (giver_id, receiver_id, title_co, date, relationship, reciprocal, managed, created_at, updated_at) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (giver_id, receiver_id) DO NOTHING 
+            RETURNING id
         '''
         params = (giver_id, receiver_id, self.title_co, self.date, self.relationship, self.reciprocal, self.managed, created_at, updated_at)
         recommendation_id = db_instance().exec_write(sql, params)
@@ -201,10 +223,10 @@ class Recommendation:
             # INSERT INTO manager_subordinates (manager_id, subordinate_id, created_at, updated_at)
             created_at = updated_at = datetime.utcnow()
             sql = '''
-            INSERT INTO manager_subordinates (manager_id, subordinate_id, created_at, updated_at) 
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (manager_id, subordinate_id) DO NOTHING 
-            RETURNING id
+                INSERT INTO manager_subordinates (manager_id, subordinate_id, created_at, updated_at) 
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (manager_id, subordinate_id) DO NOTHING 
+                RETURNING id
             '''
             params = (manager_id, subordinate_id, created_at, updated_at)
             recommendation_id = db_instance().exec_write(sql, params)
@@ -275,23 +297,13 @@ class Company:
 
     def save_to_db(self):
         company_id = Company.find_or_create_in_db(self.name, self.linkedin_url)
-        # Update will blow away any existing values (but not employees)
-        updated_at = datetime.utcnow()
-        sql = '''
-        UPDATE companies SET (industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results, updated_at) 
-        = (%s, %s, %s, %s, %s, %s, %s, %s)
-        WHERE companies.id = %s
-        RETURNING id
-        '''
-        params = (self.industry, self.size, self.headquarters, self.shareholder_type, self.founded, self.current_linkedin_employees, self.num_linkedin_results, updated_at, company_id)
-        _ = db_instance().exec_write(sql, params)
-
+        self.update_new_info_in_db(company_id)
 
         # create contact points for website and phone
         if self.website or self.phone:
             contact_info = ContactInfo(self.name)
             if self.website: contact_info.websites.append(self.website)
-            if self.website: contact_info.phones.append(self.phone)
+            if self.phone: contact_info.phones.append(self.phone)
             contact_info.save_to_db('Company', company_id)
 
         if self.employees:
@@ -301,6 +313,43 @@ class Company:
 
         return company_id
 
+    def update_new_info_in_db(self, company_id):
+        # Update will blow away any existing values (but not employees)
+
+        rows = db_instance().exec_read('SELECT industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results FROM companies WHERE id = %s', (company_id,))
+        c_industry, c_size, c_headquarters, c_shareholder_type, c_founded, c_current_linkedin_employees, c_num_linkedin_results = rows[0]
+        new_info = {}
+        if not c_industry and self.industry: new_info['industry'] = self.industry
+        if not c_size and self.size: new_info['size'] = self.size
+        if not c_headquarters and self.headquarters: new_info['headquarters'] = self.headquarters
+        if not c_shareholder_type and self.shareholder_type: new_info['shareholder_type'] = self.shareholder_type
+        if not c_founded and self.founded: new_info['founded'] = self.founded
+        if not c_current_linkedin_employees and self.current_linkedin_employees: new_info['current_linkedin_employees'] = self.current_linkedin_employees
+        if not c_num_linkedin_results and self.num_linkedin_results: new_info['num_linkedin_results'] = self.num_linkedin_results
+
+        if new_info:
+            print(f"UPDATE Company {self.name} company_id={company_id} with {new_info}")
+            updated_at = datetime.utcnow()
+            sql = '''
+                UPDATE companies SET (industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results, updated_at) 
+                = (%s, %s, %s, %s, %s, %s, %s, %s)
+                WHERE companies.id = %s
+                RETURNING id
+            '''
+            params = (c_industry or self.industry, c_size or self.size, c_headquarters or self.headquarters, c_shareholder_type or self.shareholder_type, c_founded or self.founded,
+                      c_current_linkedin_employees or self.current_linkedin_employees, c_num_linkedin_results or self.num_linkedin_results, updated_at, company_id)
+            _ = db_instance().exec_write(sql, params)
+
+            # updated_at = datetime.utcnow()
+            # sql = '''
+            #     UPDATE companies SET (industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results, updated_at)
+            #     = (%s, %s, %s, %s, %s, %s, %s, %s)
+            #     WHERE companies.id = %s
+            #     RETURNING id
+            # '''
+            # params = (self.industry, self.size, self.headquarters, self.shareholder_type, self.founded, self.current_linkedin_employees, self.num_linkedin_results, updated_at, company_id)
+            # _ = db_instance().exec_write(sql, params)
+
     @classmethod
     def find_or_create_in_db(cls, name, linkedin_url):
         '''does a quick creation of a company with just name and linkedin_url'''
@@ -308,10 +357,10 @@ class Company:
 
         created_at = updated_at = datetime.utcnow()
         sql = '''
-        INSERT INTO companies (name, linkedin_url, created_at, updated_at) 
-        VALUES(%s, %s, %s, %s)
-        ON CONFLICT (linkedin_url) DO NOTHING
-        RETURNING id
+            INSERT INTO companies (name, linkedin_url, created_at, updated_at) 
+            VALUES(%s, %s, %s, %s)
+            ON CONFLICT (linkedin_url) DO NOTHING
+            RETURNING id
         '''
         params = (name, linkedin_url, created_at, updated_at)
         company_id = db_instance().exec_write(sql, params)
@@ -326,6 +375,12 @@ class Company:
     def get_id(cls, linkedin_url):
         return db_instance().exec_read('SELECT id FROM companies WHERE linkedin_url = %s', (linkedin_url,))[0][0]
 
+
+# To avoid creating duplicate positions for the people who get scraped we use DEFAULT_TITLE as the title to
+# allow Job.save to distinguish between an employee scrape with no title and a person's scraped job history,
+# and to know whether to replace (DEFAULT_TITLE with scraped info), update (scraped info with scraped info) or
+# do nothing (to scraped info when current title is DEFAULT_TITLE)
+DEFAULT_TITLE = 'Employed'
 
 class Position:
     def __init__(self):
@@ -370,12 +425,13 @@ class Position:
                 return None
 
     def save_to_db(self, job_id):
+        self.title = self.title or DEFAULT_TITLE
         print(f"         INSERTING Position for job_id={job_id}")
         created_at = updated_at = datetime.utcnow()
         sql = '''
-        INSERT INTO positions (job_id, date_range, duration, title, location, created_at, updated_at) 
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
+            INSERT INTO positions (job_id, date_range, duration, title, location, created_at, updated_at) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         '''
         params = (job_id, self.date_range, self.duration, self.title, self.location, created_at, updated_at)
         position_id = db_instance().exec_write(sql, params)
@@ -446,17 +502,16 @@ class Job:
                 # ASSUMPTION the person could not have held multiple positions with the same title at the job
                 if existing_positions and p.title in existing_positions:
                     print(f"      EXISTING Position with title={p.title} for job_id={job_id}")
-                    position_id = existing_positions[p.title]
                 else:
-                    position_id = p.save_to_db(job_id)
+                    p.save_to_db(job_id)
 
         else: # this is a totally new job, so just add all the positions
             print(f"      INSERTING job for person_id = {person_id} company_id = {self.company_id}")
             created_at = updated_at = datetime.utcnow()
             sql = '''
-            INSERT INTO jobs (company_id, person_id, total_duration, created_at, updated_at) 
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
+                INSERT INTO jobs (company_id, person_id, total_duration, created_at, updated_at) 
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
             '''
             params = (self.company_id, person_id, self.total_duration, created_at, updated_at)
             job_id = db_instance().exec_write(sql, params)
@@ -497,7 +552,7 @@ class JobHistory:
         return job_history
 
     def save_to_db(self, person_id):
-        print(f"   SAVING job history for {person_id}")
+        print(f"   SAVING job history for Person {person_id}")
 
         # search for existing jobs once and pass into Job.save_to_db so it can update and not duplicate existing jobs
         existing_jobs = {row[0]: row[1] for row in db_instance().exec_read('SELECT company_id, id as job_id FROM jobs WHERE person_id = %s', (person_id,))}
@@ -517,8 +572,8 @@ class Scrape:
     def save_to_db(self):
         last_scraped = updated_at = datetime.utcnow()
         sql = '''
-        UPDATE scrapes SET (status, message, last_scraped, updated_at) = (%s, %s, %s, %s)
-        WHERE scrapes.id = %s RETURNING id
+            UPDATE scrapes SET (status, message, last_scraped, updated_at) = (%s, %s, %s, %s)
+            WHERE scrapes.id = %s RETURNING id
         '''
         params = (self.status, self.message, last_scraped, updated_at, self.id)
         return db_instance().exec_write(sql, params)
@@ -528,10 +583,10 @@ class Scrape:
         '''does a quick creation of a scrape with just scrapable_type and scrapable_id'''
         created_at = updated_at = datetime.utcnow()
         sql = '''
-        INSERT INTO scrapes (scrapable_type, scrapable_id, created_at, updated_at) 
-        VALUES(%s, %s, %s, %s)
-        ON CONFLICT (scrapable_type, scrapable_id) DO NOTHING
-        RETURNING id
+            INSERT INTO scrapes (scrapable_type, scrapable_id, created_at, updated_at) 
+            VALUES(%s, %s, %s, %s)
+            ON CONFLICT (scrapable_type, scrapable_id) DO NOTHING
+            RETURNING id
         '''
         params = (scrapable_type, scrapable_id, created_at, updated_at)
         _ = db_instance().exec_write(sql, params)

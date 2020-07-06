@@ -135,8 +135,11 @@ class LinkedinCompanyScraper(LinkedinScraper):
 
             # The number of search results is in <h3 class="search-results__total">254 results</h3>
             # for large numbers it may look like this 'About 13,000 results'
-            results_str = self.browser.find_element_by_class_name('search-results__total').text.replace(',', '').strip('About ')
-            company.num_linkedin_results = int(results_str.split()[0])
+            try:
+                results_str = self.browser.find_element_by_class_name('search-results__total').text.replace(',', '').strip('About ')
+                company.num_linkedin_results = int(results_str.split()[0])
+            except Exception as e:
+                print(f"could not split results_str because results_str='{results_str}'")
 
         # Now we have a search results page that can be scraped the same way regardless of whether or not it came from a company page
         # though when we don't come from a company page we get fuzzier data:

@@ -108,6 +108,7 @@ class LinkedinPersonScraper(LinkedinScraper):
 
             return Skills(skills_list)
         except NoSuchElementException as e:
+            print(f"scrape_skills raised {e}")
             return Skills([]) # some people ain't got no skills
 
     def click_on_show_more_jobs(self, num_clicks=2, wait_for_jobs_load_seconds=1):
@@ -154,7 +155,7 @@ class LinkedinPersonScraper(LinkedinScraper):
     def scrape_single_position_job(self, job: Job, job_element: WebElement):
         summary_element = self.find_summary_element(job_element, 'pv-entity__summary-info')
 
-        job.company.name = summary_element.find_element_by_class_name('pv-entity__secondary-title').text.strip()
+        job.company.name = summary_element.find_element_by_class_name('pv-entity__secondary-title').text.replace('Full-time', '').replace('Part-time', '').strip()
 
         position = Position()
         position.title = summary_element.find_element_by_class_name('t-16').text.strip()
