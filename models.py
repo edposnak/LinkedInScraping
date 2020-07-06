@@ -59,7 +59,7 @@ class Person:
         if person_id:
             print(f"INSERTED Person {name} person_id={person_id}")
         else:
-            person_id = db_instance().exec_sql('SELECT id FROM people WHERE linkedin_url = %s', (linkedin_url,))[0][0]
+            person_id = db_instance().exec_read('SELECT id FROM people WHERE linkedin_url = %s', (linkedin_url,))[0][0]
             print(f"EXISTING Person {name} person_id={person_id}")
 
         return person_id
@@ -149,7 +149,7 @@ class Skills:
         if skill_id:
             print(f"   INSERTED Skill {name} skill_id={skill_id}")
         else:
-            skill_id = db_instance().exec_sql('SELECT id FROM skills WHERE name = %s', (name,))[0][0]
+            skill_id = db_instance().exec_read('SELECT id FROM skills WHERE name = %s', (name,))[0][0]
             print(f"   EXISTING Skill {name} skill_id={skill_id}")
 
         return skill_id
@@ -318,10 +318,13 @@ class Company:
         if company_id:
             print(f"INSERTED Company {name} company_id={company_id}")
         else:
-            company_id = db_instance().exec_sql('SELECT id FROM companies WHERE linkedin_url = %s', (linkedin_url,))[0][0]
+            company_id = cls.get_id(linkedin_url)
             print(f"EXISTING Company {name} company_id={company_id}")
         return company_id
 
+    @classmethod
+    def get_id(cls, linkedin_url):
+        return db_instance().exec_read('SELECT id FROM companies WHERE linkedin_url = %s', (linkedin_url,))[0][0]
 
 
 class Position:
@@ -407,19 +410,19 @@ class Job:
         '''Saves the job inserting if not already in existing_jobs, which is a dict of {company_id: job_id}'''
 
         # check whether the company exists because it often will and job history is not a deep scrape of the company
-        company_id = Company.find_or_create_in_db(self.company.name, self.company.linkedin_url)
+        self.company_id = Company.find_or_create_in_db(self.company.name, self.company.linkedin_url)
 
         # ASSUMPTION any job with the same (company_id, person_id) is a duplicate
         # THIS IS A BAD ASSUMPTION because we can't require (company_id, person_id) to be unique as the person may have
         # held multiple jobs with the company at different times so just updating the position instead of creating a
         # totally separate job is wrong
-        if company_id in existing_jobs:
-            job_id = existing_jobs[company_id]
-            print(f"   EXISTING Job for company_id={company_id}, person_id={person_id} job_id={job_id}")
+        if self.company_id in existing_jobs:
+            job_id = existing_jobs[self.company_id]
+            print(f"   EXISTING Job for company_id={self.company_id}, person_id={person_id} job_id={job_id}")
             # TODO update with total_duration
 
-            # existing_positions = [ (row[0],row[1],row[2],row[3],row[4]) for row in db_instance().exec_sql('SELECT id, date_range, duration, title, location FROM positions WHERE job_id = %s', (job_id,)) ]
-            existing_positions = { row[0]: row[1] for row in db_instance().exec_sql('SELECT title, id as position_id FROM positions WHERE job_id = %s', (job_id,)) }
+            # existing_positions = [ (row[0],row[1],row[2],row[3],row[4]) for row in db_instance().exec_read('SELECT id, date_range, duration, title, location FROM positions WHERE job_id = %s', (job_id,)) ]
+            existing_positions = {row[0]: row[1] for row in db_instance().exec_read('SELECT title, id as position_id FROM positions WHERE job_id = %s', (job_id,))}
 
             try:
                 if self.positions[0].title == DEFAULT_TITLE: # we have no new information to add
@@ -434,8 +437,8 @@ class Job:
 
             if DEFAULT_TITLE in existing_positions:
                 if len(existing_positions) == 1:
-                    print(f"      DELETING default position under same job for company_id={company_id}, person_id={person_id} job_id={job_id}")
-                    db_instance().quick_sql('''DELETE FROM positions WHERE id = (%s)''', (existing_positions[DEFAULT_TITLE],))
+                    print(f"      DELETING default position under same job for company_id={self.company_id}, person_id={person_id} job_id={job_id}")
+                    db_instance().exec_write('''DELETE FROM positions WHERE id = (%s)''', (existing_positions[DEFAULT_TITLE],), return_id=False)
                 else: # should never happen
                     raise ValueError(f"Job with multiple positions but one with DEFAULT_TITLE was left in")
 
@@ -448,14 +451,14 @@ class Job:
                     position_id = p.save_to_db(job_id)
 
         else: # this is a totally new job, so just add all the positions
-            print(f"      INSERTING job for person_id = {person_id} company_id = {company_id}")
+            print(f"      INSERTING job for person_id = {person_id} company_id = {self.company_id}")
             created_at = updated_at = datetime.utcnow()
             sql = '''
             INSERT INTO jobs (company_id, person_id, total_duration, created_at, updated_at) 
             VALUES (%s, %s, %s, %s, %s)
             RETURNING id
             '''
-            params = (company_id, person_id, self.total_duration, created_at, updated_at)
+            params = (self.company_id, person_id, self.total_duration, created_at, updated_at)
             job_id = db_instance().exec_write(sql, params)
 
             for p in self.positions: p.save_to_db(job_id)
@@ -497,9 +500,62 @@ class JobHistory:
         print(f"   SAVING job history for {person_id}")
 
         # search for existing jobs once and pass into Job.save_to_db so it can update and not duplicate existing jobs
-        existing_jobs = { row[0]: row[1] for row in db_instance().exec_sql('SELECT company_id, id as job_id FROM jobs WHERE person_id = %s', (person_id,)) }
+        existing_jobs = {row[0]: row[1] for row in db_instance().exec_read('SELECT company_id, id as job_id FROM jobs WHERE person_id = %s', (person_id,))}
         for job in self.jobs:
             job.save_to_db(person_id, existing_jobs)
+
+
+class Scrape:
+    def __init__(self, id, scrapable_type, url):
+        self.id = id
+        self.scrapable_type = scrapable_type
+        self.url = url  # this comes from a join with the scrapable_type (i.e. Person or Company)
+
+        self.status = 0
+        self.message = None
+
+    def save_to_db(self):
+        last_scraped = updated_at = datetime.utcnow()
+        sql = '''
+        UPDATE scrapes SET (status, message, last_scraped, updated_at) = (%s, %s, %s, %s)
+        WHERE scrapes.id = %s RETURNING id
+        '''
+        params = (self.status, self.message, last_scraped, updated_at, self.id)
+        return db_instance().exec_write(sql, params)
+
+    @classmethod
+    def find_or_create_in_db(cls, scrapable_type, scrapable_id):
+        '''does a quick creation of a scrape with just scrapable_type and scrapable_id'''
+        created_at = updated_at = datetime.utcnow()
+        sql = '''
+        INSERT INTO scrapes (scrapable_type, scrapable_id, created_at, updated_at) 
+        VALUES(%s, %s, %s, %s)
+        ON CONFLICT (scrapable_type, scrapable_id) DO NOTHING
+        RETURNING id
+        '''
+        params = (scrapable_type, scrapable_id, created_at, updated_at)
+        _ = db_instance().exec_write(sql, params)
+
+
+
+    @classmethod
+    def next_unscraped(cls):
+        '''Returns a scrape object with the URL to scrape if an unscraped scrape exists'''
+        table_map = {'Person': 'people', 'Company': 'companies'}
+
+        for scrapable_type, table_name in table_map.items():
+            sql = f'''SELECT s.id, s.scrapable_type, t.linkedin_url
+            FROM {table_name} t
+            JOIN scrapes s ON s.scrapable_id = t.id 
+            WHERE s.scrapable_type = %s AND s.last_scraped IS NULL 
+            LIMIT 1'''
+
+            rows = db_instance().exec_read(sql, (scrapable_type,))
+            if rows:
+                print(f"rows[0] = {rows[0]}")
+                return cls(*rows[0])
+
+        # returns None if no unscraped scrapes are found
 
 
 @functools.lru_cache()
@@ -512,28 +568,24 @@ class RailsDB:
         self.conn = psycopg2.connect(db_url)
         self.cur = self.conn.cursor()
 
-    def quick_sql(self, sql, params=(), commit=True):
-        print(f"SQL: {sql}\nPARAMS: {params}")
-        r = self.cur.execute(sql, params)
-        if commit: self.commit_all()
-        print(f"r = {r}")
+    # Alternative syntax using with
+    # with self.conn:
+    #     with self.conn.cursor() as curs:
+    #         curs.execute(sql, params)
 
 
-    def exec_sql(self, sql, params=()):
+    def exec_read(self, sql, params=()):
         # print(f"SQL: {sql}\nPARAMS: {params}")
         self.cur.execute(sql, params)
         return self.cur.fetchall()
 
 
-    def exec_write(self, sql, params, commit=True):
-        # with self.conn:
-        #     with self.conn.cursor() as curs:
-        #         curs.execute(sql, params)
-
+    def exec_write(self, sql, params, commit=True, return_id=True):
         self.cur.execute(sql, params)
         if commit: self.commit_all()
-        row_with_id = self.cur.fetchone()
-        return row_with_id and int(row_with_id[0])
+        if return_id:
+            row_with_id = self.cur.fetchone()
+            return row_with_id and int(row_with_id[0])
 
     def commit_all(self):
         self.conn.commit()

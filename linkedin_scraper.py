@@ -15,27 +15,21 @@ class ScrapingResult:
     def __init__(self, data=None, error=None, url=None):
         self.data, self.error, self.url = data, error, url
 
-class HumanCheckException(Exception): pass
+class CaptchaEncounteredException(Exception): pass
+class ScrapingException(Exception): pass
 
 
 # Abstract class. Subclasses must implement a scrape(self, url) method that returns a ScrapingResult
-class LinkedinScraper(Thread):
-    def __init__(self, identifier, urls_to_scrape, linkedin_credentials, headless=False):
-        super(LinkedinScraper, self).__init__()
+class LinkedinScraper:
+    def __init__(self, p_args):
+        self.linkedin_credentials = (p_args.user, p_args.password)
+        self.headless = p_args.headless # used to decide whether to bail when a human check occurs
 
-        self._id = identifier
-
-        # use linkedin convention of trailing '/' to prevent duplication of users/companies
-        self.urls_to_scrape = [ canonize_linkedin_url(u) for u in urls_to_scrape ]
-
-        self.linkedin_credentials = linkedin_credentials
-
-        self.headless = headless # used to decide whether to bail when a human check occurs
-
-        self.results = []
-        self.company_cache = {}
+        self.blocked_by_captcha = False
 
         self.browser = self.launch_chromedriver()
+        self.login()
+
 
     def login(self, logout_first=False):
         if logout_first: self.browser.get('https://www.linkedin.com/m/logout')
@@ -90,10 +84,10 @@ class LinkedinScraper(Thread):
         if not current_url == expected_page_url:
             # print(f"load_page tried to load {page_url} but ended up at {current_url}")
             if current_url == 'https://www.linkedin.com/in/unavailable/':
-                return ScrapingResult(error=f"Attempted to load a page that was unavailable", url=expected_page_url)
+                raise ScrapingException(f"Attempted to load a page that was unavailable url={expected_page_url}")
             # https://www.linkedin.com/checkpoint/challengesV2/... is a human check
             if 'linkedin.com/checkpoint/' in current_url:
-                raise HumanCheckException
+                raise CaptchaEncounteredException
 
 
     def scroll_to_bottom_to_load_all_content(self, loading_scroll_time=1):
@@ -106,58 +100,56 @@ class LinkedinScraper(Thread):
             time.sleep(loading_scroll_time)
             scrolls += 1
 
-    def print_time_left(self, count, start_time, url):
-        '''Print predicted ending time of the script'''
-        if count > 1:
-            time_left = ((time.time() - start_time) / count) * (len(self.urls_to_scrape) - count + 1)
-            ending_in = time.strftime("%H:%M:%S", time.gmtime(time_left))
-        else:
-            ending_in = "Unknown time"
-        print(f"Scraper #{self._id}: Scraping URL {url} {count} / {len(self.urls_to_scrape)} - {ending_in} left")
-
-    def message_to_user(message, speak=True):
+    def notify_user(self, message, speak=True):
         print(message)
-
         if speak:
             engine = pyttsx3.init()
             engine.say(message)
             engine.runAndWait()
 
-    def run(self):
-        self.login()
+    def clear_captcha(self):
+        '''Prompt the user to manually clear the captcha in the browser'''
+        back_to_normal_url = 'https://www.linkedin.com/feed/'
 
-        start_time, count = time.time(), 0
+        self.login(logout_first=True)
 
-        for url in self.urls_to_scrape:
-            count += 1
-            self.print_time_left(count, start_time, url)
-            try:
-                self.load_page(url)
-                scraping_result = self.scrape(url)
-                if not scraping_result.url: scraping_result.url = url
-
-            except HumanCheckException:
-                scraping_result = ScrapingResult(error='Manual human check encountered in headless mode', url=url)
-                if self.headless:
-                    break # no point in continuing
-
-                else: # Prompt the user to execute the human check in the browser
-                    self.login(logout_first=True)
-                    for pester in range(3):
-                        if self.browser.current_url != 'https://www.linkedin.com/feed/':
-                            self.message_to_user('Please execute human check manually')
-                            time.sleep(30)
-
-            except Exception as e:
-                with open(f"linkedin_scraper_errors.txt", "a") as errlog: traceback.print_exc(file=errlog)
-                scraping_result = ScrapingResult(error=f"{type(e)}{e.args}", url=url)
-                # keep going and appending to errlog as exceptions occur
-
-            self.results.append(scraping_result)
+        # Prompt the user to manually clear the captcha and check if successful
+        for pester in range(3):
+            self.notify_user('Please manually clear the captcha')
+            time.sleep(30)
+            if self.browser.current_url == back_to_normal_url:
+                self.blocked_by_captcha = False
+                break
 
 
+    def run(self, url_to_scrape):
+        # use linkedin convention of trailing '/' to prevent duplication of users/companies
+        url = canonize_linkedin_url(url_to_scrape)
+
+        if self.blocked_by_captcha:
+            if self.headless: # no point in continuing
+                return ScrapingResult(error='Captcha encountered in headless mode', url=url)
+            else:
+                self.clear_captcha()
+
+        try:
+            if self.blocked_by_captcha: raise CaptchaEncounteredException
+            self.load_page(url)
+            scraping_result = self.scrape(url)
+            scraping_result.url = url
+
+        except CaptchaEncounteredException:
+            return ScrapingResult(error='Captcha encountered but not cleared manually', url=url)
+            self.blocked_by_captcha = True
+
+        except Exception as e:
+            with open(f"linkedin_scraper_errors.txt", "a") as errlog: traceback.print_exc(file=errlog)
+            scraping_result = ScrapingResult(error=f"{type(e)}{e.args}", url=url)
+            # keep going and appending to errlog as exceptions occur
+
+        return scraping_result
+
+
+    def shutdown(self):
         self.browser.quit()
-        end_time = time.time()
-        elapsed_time = time.strftime('%H:%M:%S', time.gmtime(end_time - start_time))
-        print(f"Scraper #{self._id}: Scraped {count} / {len(self.urls_to_scrape)} URLs in {elapsed_time}")
 

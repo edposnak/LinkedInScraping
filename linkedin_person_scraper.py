@@ -17,42 +17,50 @@ class LinkedinPersonScraper(LinkedinScraper):
         super(LinkedinPersonScraper, self).__init__(*args)
 
     def scrape(self, linkedin_profile_url):
+        person = Person(None, linkedin_profile_url)
+
+        try:
+            print(f"scraping name, location, and summary {person.linkedin_url}")
+            self.scrape_top_card(person)  # gets name, summary, location
+
+            print(f"scraping contact_info for {person.name}")
+            person.contact_info = self.scrape_contact_info()
+            print(f"{person.name} {person.contact_info}")
+
+            self.scroll_to_bottom_to_load_all_content()
+            print(f"scraping skills for {person.name}")
+            person.skills = self.scrape_skills()
+            print(f"{person.name} {person.skills}")
+
+            print(f"scraping job_history for {person.name}")
+            self.click_on_show_more_jobs()
+            person.job_history = self.scrape_job_history()
+            print(f"{person.name} {person.job_history}")
+
+            print(f"scraping recommendations for {person.name}")
+            person.recommendations_given, person.recommendations_received = self.scrape_recommendations()
+            print(f"{person.name} recommendations_given={person.recommendations_given}")
+            print(f"{person.name} recommendations_received={person.recommendations_received}")
+
+            return ScrapingResult(person)
+
+        except Exception as e:
+            if person.name: # partial result
+                return ScrapingResult(person, error=e)
+            else:
+                return ScrapingResult(None, error=e)
+
+    def scrape_top_card(self, person):
         # <section id="ember54" class="pv-top-card artdeco-card ember-view"><!---->
         top_card_section = self.browser.find_element_by_class_name('pv-top-card')
-
         # <ul class="pv-top-card--list inline-flex align-items-center">
         top_card_list_elements = top_card_section.find_elements_by_class_name('pv-top-card--list')
         #     <li class="inline t-24 t-black t-normal break-words"> Luther Knox </li>
-        profile_name = top_card_list_elements[0].find_element_by_tag_name('li').text.strip()
-
-        person = Person(profile_name, linkedin_profile_url)
-
+        person.name = top_card_list_elements[0].find_element_by_tag_name('li').text.strip()
         # <h2 class="mt1 t-18 t-black t-normal break-words"> Creative Director at LiveIntent, Inc. </h2>
         person.summary = top_card_section.find_element_by_tag_name('h2').text.strip()
-
         # <li class="t-16 t-black t-normal inline-block"> New York, New York </li>
         person.location = top_card_list_elements[1].find_element_by_tag_name('li').text.strip()
-
-        print(f"contact info for {person.name}")
-        person.contact_info = self.scrape_contact_info()
-        print(f"{person.name} {person.contact_info}")
-
-        self.scroll_to_bottom_to_load_all_content()
-        print(f"scraping skills for {person.name}")
-        person.skills = self.scrape_skills()
-        print(f"{person.name} {person.skills}")
-
-        print(f"scraping job_history for {person.name}")
-        self.click_on_show_more_jobs()
-        person.job_history = self.scrape_job_history()
-        print(f"{person.name} {person.job_history}")
-
-        print(f"scraping recommendations for {person.name}")
-        person.recommendations_given, person.recommendations_received = self.scrape_recommendations()
-        print(f"{person.name} recommendations_given={person.recommendations_given}")
-        print(f"{person.name} recommendations_received={person.recommendations_received}")
-
-        return ScrapingResult(person, url=linkedin_profile_url)
 
     def scrape_contact_info(self, wait_for_modal_load_seconds=2):
         # click on 'Contact info' link to open up the modal
@@ -128,7 +136,6 @@ class LinkedinPersonScraper(LinkedinScraper):
             try:
                 self.scrape_single_position_job(job, job_element)
             except JobSummaryNotFoundException as e:
-                # print(f"scrape_single_position_job({job_element.tag_name} class={job_element.get_attribute('class')}) raised {e} for job {n+1}")
                 try:
                     self.scrape_multi_position_job(job, job_element)
                 except Exception as e:
@@ -194,6 +201,7 @@ class LinkedinPersonScraper(LinkedinScraper):
             job.add_position(position)
 
     def find_summary_element(self, dom_element, summary_class_name):
+        summary_element = None
         try:
             summary_element = dom_element.find_element_by_class_name(summary_class_name)
         except NoSuchElementException as e:
@@ -241,7 +249,6 @@ class LinkedinPersonScraper(LinkedinScraper):
 
             # if the Received tab is visible (i.e. aria-selected="selected") scrape it, then click the given_button to switch tabs and scrape Given
             if received_tab_button.get_attribute('aria-selected') == 'true':
-                print(f"*** STARTED on the received tab")
                 recommendations_received = self.scrape_reco_list(received_tab_button)
 
                 # Now switch tabs to the Given recommendations
@@ -249,7 +256,6 @@ class LinkedinPersonScraper(LinkedinScraper):
                 time.sleep(wait_for_recommendations_load_seconds)
                 recommendations_given = self.scrape_reco_list(given_tab_button)
             else: # if the Received tab is hidden (i.e. aria-selected="false") assume none received, and just get given
-                print(f"*** STARTED on the given tab")
                 recommendations_given = self.scrape_reco_list(given_tab_button)
 
                 # Now switch tabs to the Received recommendations
@@ -296,7 +302,6 @@ class LinkedinPersonScraper(LinkedinScraper):
             except NoSuchElementException as e:
                 break # keep clicking until the button is not found
 
-        print(f"*** BEGIN scraping recos ...")
 
         # recommendations are a series of <li class="pv-recommendation-entity"> elements found underneath the div controlled by the button
         print(f"   found {len(controlled_div_element.find_elements_by_class_name('pv-recommendation-entity'))} recommendations")
