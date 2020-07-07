@@ -330,16 +330,8 @@ class LinkedinPersonScraper(LinkedinScraper):
             recommendation.date = ','.join(parts[0:2]).strip()
             recommendation.relationship = ''.join(parts[2:]).strip()
 
-            if recommendation.relationship and 'managed' in recommendation.relationship: recommendation.managed = True
-            if recommendation.relationship and 'reported directly' in recommendation.relationship: recommendation.reported_to = True
-
-            # only add recommendations with a name (hidden recommendations have blank name, etc.)
-            # TODO this doesn't happen anymore because we search the div controlled by the button
-            if recommendation.name:  # received recommendation
-                print(f"   ADDING recommendation {recommendation}")
-                recommendations.add(recommendation)
-            else:  # given recommendation
-                print(f"   SKIPPING recommendation with blank name")
+            if not recommendation.name:  raise ValueError(f"failed to scrape recommendation name")
+            recommendations.add(recommendation)
 
         # if showed_more:
         #     print(f"   CLICKING show less button")

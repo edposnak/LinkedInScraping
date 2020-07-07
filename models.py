@@ -186,8 +186,6 @@ class Recommendation:
         self.date = None
         self.relationship = None
         self.reciprocal = False
-        self.managed = False
-        self.reported_to = False
 
     def __str__(self):
         flags = []
@@ -195,6 +193,11 @@ class Recommendation:
         if self.managed: flags.append('*MANAGER*')
         return f"{self.date}: {', '.join(flags) if flags else ''} {self.name} ({self.title_co}) {self.relationship}"
 
+    def managed(self):
+        return bool('managed' in self.relationship)
+
+    def reported_to(self):
+        return bool('reported directly' in self.relationship)
 
     def save_to_db(self, person_id, person_is):
         # find or create the person giving the recommendation
@@ -216,7 +219,7 @@ class Recommendation:
         else:
             print(f"   EXISTING Recommendation")
 
-        if self.managed or self.reported_to: # create manager_subordinate row
+        if self.managed() or self.reported_to(): # create manager_subordinate row
             # the giver is always the one who managed or reported to the person
             manager_id, subordinate_id = (receiver_id, giver_id) if self.reported_to else (giver_id, receiver_id)
 
@@ -667,14 +670,14 @@ def ejp_test():
     r1.name, r1.linkedin_url = 'Keith Hulen', 'https://www.linkedin.com/in/keith-hulen-a874175/'
     r1.title_co = 'Co-founder of Veridyme'
     r1.date, r1.relationship = 'November 5, 2013', 'Keith managed Ed directly'
-    r1.reciprocal, r1.managed = False, True
+    r1.reciprocal = False
     ejp.recommendations.add(r1)
 
     r2 = Recommendation()
     r2.name, r2.linkedin_url = 'Jennifer Gunther', 'https://www.linkedin.com/in/jennifergunther/'
     r2.title_co = 'Lead Digital Product Designer at Self Employed'
     r2.date, r2.relationship = 'January 1, 2020', 'Jennifer knows Ed'
-    r2.reciprocal, r2.managed = True, False
+    r2.reciprocal = True
     ejp.recommendations.add(r2)
 
     # JobHistory
