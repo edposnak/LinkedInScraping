@@ -169,7 +169,9 @@ class LinkedinCompanyScraper(LinkedinScraper):
                     continue
                 linkedin_url = a_tag.get_attribute('href')
                 # If that href is not a profile (e.g. # or https://www.linkedin.com/search/results/all/?keywords=SLKS%2C%20Inc) they are probably unreachable
-                # TODO: make sure 'LinkedIn Member' catches all non-reachables and non-employees
+                if 'search/results' in linkedin_url:
+                    print(f"BOO can't scrape out-of-network person with linkedin_url={linkedin_url}")
+                    continue
                 person = Person(name, linkedin_url)
             except Exception as e:
                 print(f"scrape employee moving on because result raised {e}")
