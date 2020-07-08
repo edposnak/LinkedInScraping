@@ -221,7 +221,7 @@ class Recommendation:
             ON CONFLICT (giver_id, receiver_id) DO NOTHING 
             RETURNING id
         '''
-        params = (giver_id, receiver_id, self.title_co, self.date, self.relationship, self.reciprocal, self.managed, created_at, updated_at)
+        params = (giver_id, receiver_id, self.title_co, self.date, self.relationship, self.reciprocal, self.managed(), created_at, updated_at)
         recommendation_id = db_instance().exec_write(sql, params)
 
         if recommendation_id:
