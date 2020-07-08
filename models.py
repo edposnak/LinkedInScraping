@@ -29,6 +29,12 @@ class Person:
     def is_same(self, other):
         return canonize_linkedin_url(self.linkedin_url) == canonize_linkedin_url(other.linkedin_url)
 
+    def all_company_ids(self):
+        return [ job.company_id for job in self.job_history ]
+
+    def all_manager_ids(self):
+        return [ r.manager_id for r in self.recommendations_given + self.recommendations_received if r.manager_id ]
+
     def save_to_db(self):
         person_id = Person.find_or_create_in_db(self.name, self.linkedin_url, self.summary, self.location)
         self.update_new_info_in_db(person_id)
@@ -179,6 +185,7 @@ class Skills:
 
 class Recommendation:
     def __init__(self):
+        # name and linkedin_url of the other person involved in the recommendation
         self.linkedin_url = None
         self.name = None
 
@@ -187,12 +194,15 @@ class Recommendation:
         self.relationship = None
         self.reciprocal = False
 
+        self.manager_id = None # used by Person to return a list of manager_ids
+
     def __str__(self):
         flags = []
         if self.reciprocal: flags.append('*reciprocal*')
         if self.managed: flags.append('*MANAGER*')
         return f"{self.date}: {', '.join(flags) if flags else ''} {self.name} ({self.title_co}) {self.relationship}"
 
+    # These are dumb functions that just tell if 'managed' or 'reported directly' is in the relationship
     def managed(self):
         return bool('managed' in self.relationship)
 
@@ -220,8 +230,11 @@ class Recommendation:
             print(f"   EXISTING Recommendation")
 
         if self.managed() or self.reported_to(): # create manager_subordinate row
-            # the giver is always the one who managed or reported to the person
-            manager_id, subordinate_id = (receiver_id, giver_id) if self.reported_to else (giver_id, receiver_id)
+            # Assumes the giver is always the one who managed or reported to the person
+            manager_id, subordinate_id = (receiver_id, giver_id) if self.reported_to() else (giver_id, receiver_id)
+
+            # save the manager_id if the other was the manager
+            if manager_id == other_id: self.manager_id = manager_id
 
             # INSERT INTO manager_subordinates (manager_id, subordinate_id, created_at, updated_at)
             created_at = updated_at = datetime.utcnow()
@@ -441,12 +454,6 @@ class Position:
         return position_id
 
 
-# To avoid creating duplicate positions for the people who get scraped we use DEFAULT_TITLE as the title to
-# allow Job.save to distinguish between an employee scrape with no title and a person's scraped job history,
-# and to know whether to replace (DEFAULT_TITLE with scraped info), update (scraped info with scraped info) or
-# do nothing (to scraped info when current title is DEFAULT_TITLE)
-DEFAULT_TITLE = 'Employed'
-
 
 class Job:
     def __init__(self):
@@ -564,15 +571,22 @@ class JobHistory:
 
 
 class Scrape:
-    def __init__(self, id, scrapable_type, url):
+    def __init__(self, id, scrapable_type, flags, url):
         self.id = id
         self.scrapable_type = scrapable_type
+        self.flags = flags
         self.url = url  # this comes from a join with the scrapable_type (i.e. Person or Company)
 
         self.status = 0
         self.message = None
 
-    def save_to_db(self):
+    def do_companies(self):
+        return self.scrapable_type == 'Person' and self.flags and 'c' in self.flags
+
+    def do_managers(self):
+        return self.scrapable_type == 'Person' and self.flags and 'm' in self.flags
+
+    def update_status_in_db(self):
         last_scraped = updated_at = datetime.utcnow()
         sql = '''
             UPDATE scrapes SET (status, message, last_scraped, updated_at) = (%s, %s, %s, %s)
@@ -582,16 +596,16 @@ class Scrape:
         return db_instance().exec_write(sql, params)
 
     @classmethod
-    def find_or_create_in_db(cls, scrapable_type, scrapable_id):
+    def find_or_create_in_db(cls, scrapable_type, scrapable_id, flags=None):
         '''does a quick creation of a scrape with just scrapable_type and scrapable_id'''
         created_at = updated_at = datetime.utcnow()
         sql = '''
-            INSERT INTO scrapes (scrapable_type, scrapable_id, created_at, updated_at) 
-            VALUES(%s, %s, %s, %s)
+            INSERT INTO scrapes (scrapable_type, scrapable_id, flags, created_at, updated_at) 
+            VALUES(%s, %s, %s, %s, %s)
             ON CONFLICT (scrapable_type, scrapable_id) DO NOTHING
             RETURNING id
         '''
-        params = (scrapable_type, scrapable_id, created_at, updated_at)
+        params = (scrapable_type, scrapable_id, flags, created_at, updated_at)
         _ = db_instance().exec_write(sql, params)
 
 
@@ -602,7 +616,7 @@ class Scrape:
         table_map = {'Person': 'people', 'Company': 'companies'}
 
         for scrapable_type, table_name in table_map.items():
-            sql = f'''SELECT s.id, s.scrapable_type, t.linkedin_url
+            sql = f'''SELECT s.id, s.scrapable_type, s.flags, t.linkedin_url
             FROM {table_name} t
             JOIN scrapes s ON s.scrapable_id = t.id 
             WHERE s.scrapable_type = %s AND s.last_scraped IS NULL 
