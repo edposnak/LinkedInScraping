@@ -30,9 +30,11 @@ class Person:
         return canonize_linkedin_url(self.linkedin_url) == canonize_linkedin_url(other.linkedin_url)
 
     def all_company_ids(self):
+        if self.job_history is None: return []
         return [ job.company_id for job in self.job_history ]
 
     def all_manager_ids(self):
+        if self.recommendations_given is None or self.recommendations_received is None: return []
         return [ r.manager_id for r in self.recommendations_given + self.recommendations_received if r.manager_id ]
 
     def save_to_db(self):
@@ -256,6 +258,11 @@ class Recommendations:
     def __iter__(self):
         return iter(self.recommendations)
 
+    def __add__(self, other):
+        result = Recommendations()
+        result.recommendations = self.recommendations + other.recommendations
+        return result
+
     def __str__(self):
         result = 'Recommendations:'
         for recommendation in self.recommendations:
@@ -473,7 +480,7 @@ class Job:
         self.positions.append(position)
 
     def save_to_db(self, person_id, existing_jobs):
-        '''Saves the job inserting if not already in existing_jobs, which is a dict of {company_id: job_id}'''
+        '''Saves the job inserting if not already in existing_jobs, which is a dict of {company_id: existing_job_id}'''
 
         # check whether the company exists because it often will and job history is not a deep scrape of the company
         self.company_id = Company.find_or_create_in_db(self.company.name, self.company.linkedin_url)
@@ -483,37 +490,37 @@ class Job:
         # held multiple jobs with the company at different times so just updating the position instead of creating a
         # totally separate job is wrong
         if self.company_id in existing_jobs:
-            job_id = existing_jobs[self.company_id]
-            print(f"   EXISTING Job for company_id={self.company_id}, person_id={person_id} job_id={job_id}")
+            existing_job_id = existing_jobs[self.company_id]
+            print(f"   EXISTING Job for company_id={self.company_id}, person_id={person_id} existing_job_id={existing_job_id}")
             # TODO update with total_duration
 
-            # existing_positions = [ (row[0],row[1],row[2],row[3],row[4]) for row in db_instance().exec_read('SELECT id, date_range, duration, title, location FROM positions WHERE job_id = %s', (job_id,)) ]
-            existing_positions = {row[0]: row[1] for row in db_instance().exec_read('SELECT title, id as position_id FROM positions WHERE job_id = %s', (job_id,))}
+            existing_positions = {row[0]: row[1] for row in db_instance().exec_read('SELECT title, id as position_id FROM positions WHERE job_id = %s', (existing_job_id,))}
 
             try:
-                if self.positions[0].title == DEFAULT_TITLE: # we have no new information to add
+                if self.positions[0].title is None:  # we have no new information to add
+                    print(f"      SKIPPING single position with blank title for existing_job_id={existing_job_id}")
                     if len(self.positions) == 1:
                         return
                     else: # should never happen
-                        raise ValueError(f"Job with multiple positions and first one has DEFAULT_TITLE")
+                        raise ValueError(f"Job with multiple positions (i.e. non-employee scrape) has no title")
             except Exception as e:
-                print(f"WTF: self.positions[0].title == DEFAULT_TITLE raised {e} ")
+                print(f"WTF: self.positions[0].title is None raised {e} ")
+                print(f"existing_job_id={existing_job_id}")
+                print(f"self.positions={self.positions}")
+                print(f"self.total_duration={self.total_duration}")
                 return
 
-
             if DEFAULT_TITLE in existing_positions:
-                if len(existing_positions) == 1:
-                    print(f"      DELETING default position under same job for company_id={self.company_id}, person_id={person_id} job_id={job_id}")
-                    db_instance().exec_write('''DELETE FROM positions WHERE id = (%s)''', (existing_positions[DEFAULT_TITLE],), return_id=False)
-                else: # should never happen
-                    raise ValueError(f"Job with multiple positions but one with DEFAULT_TITLE was left in")
+                if len(existing_positions) != 1: print(f"   UNEXPECTED: Job has multiple positions but one with DEFAULT_TITLE")
+                print(f"      DELETING default position(s) under same job for company_id={self.company_id}, person_id={person_id} existing_job_id={existing_job_id}")
+                db_instance().exec_write('''DELETE from positions WHERE job_id = (%s) AND title = (%s)''', (existing_job_id, DEFAULT_TITLE), return_id=False)
 
             for p in self.positions:
                 # ASSUMPTION the person could not have held multiple positions with the same title at the job
                 if existing_positions and p.title in existing_positions:
-                    print(f"      EXISTING Position with title={p.title} for job_id={job_id}")
+                    print(f"      EXISTING Position with title={p.title} for existing_job_id={existing_job_id}")
                 else:
-                    p.save_to_db(job_id)
+                    p.save_to_db(existing_job_id)
 
         else: # this is a totally new job, so just add all the positions
             print(f"      INSERTING job for person_id = {person_id} company_id = {self.company_id}")
@@ -624,7 +631,6 @@ class Scrape:
 
             rows = db_instance().exec_read(sql, (scrapable_type,))
             if rows:
-                print(f"rows[0] = {rows[0]}")
                 return cls(*rows[0])
 
         # returns None if no unscraped scrapes are found

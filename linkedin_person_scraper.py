@@ -84,6 +84,7 @@ class LinkedinPersonScraper(LinkedinScraper):
                 result.emails = [ a.text for a in (contact_info_element.find_elements_by_tag_name('a')) ]
             elif 'ci-twitter' in contact_info_element.get_attribute('class'):
                 result.twitter_urls = [ a.get_attribute('href') for a in (contact_info_element.find_elements_by_tag_name('a')) ]
+            # TODO ci-wechat
             else:
                 print(f"IGNORING contact info element with class={contact_info_element.get_attribute('class')}")
 
@@ -142,7 +143,7 @@ class LinkedinPersonScraper(LinkedinScraper):
                 except Exception as e:
                     # print(f"scrape_multi_position_job({job_element.tag_name} class={job_element.get_attribute('class')}) raised {e} for job {n+1}")
                     print(f"Could not scrape job {n+1} as either single-position or multi-position job")
-                    if job.company.linkedin_url: print(f"WEIRD, we got the company linkedin_url but failed to get the job data")
+                    if job.company.linkedin_url: print(f"WEIRD, we got a company linkedin_url={job.company.linkedin_url} but failed to get the job data")
                     continue # give up on this job as we can't get anything
             except Exception as e:
                 print(f"caught {e} for job {n+ 1}")

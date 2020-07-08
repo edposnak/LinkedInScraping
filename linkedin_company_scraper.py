@@ -44,7 +44,11 @@ class LinkedinCompanyScraper(LinkedinScraper):
         # 1. Scrape top card section
 
         # This top card has the company name, industry, and headquarters (some of which is redundant with the overview)
-        top_card_element = self.browser.find_element_by_class_name('org-top-card-primary-content__content')
+        try:
+            top_card_element = self.browser.find_element_by_class_name('org-top-card-primary-content__content')
+        except NoSuchElementException as e:
+            top_card_element = self.browser.find_element_by_class_name('org-top-card-listing__summary')
+            # some company pages have 'org-top-card-listing__summary' instead
 
         # <h1 class="org-top-card-summary__title t-24 t-black truncate" title="Power Pro Leasing">
         company.name = top_card_element.find_element_by_class_name('org-top-card-summary__title').get_attribute('title').strip()
@@ -127,9 +131,13 @@ class LinkedinCompanyScraper(LinkedinScraper):
             print(f"WTF: not a company page and not a results page url={self.browser.current_url}")
 
         if company_page_results:  # we're on a Company (home or about) page
-            # If there are employees, there should be an <a> to click
-            # <a data-control-name="topcard_see_all_employees" href="/search/results/people/?facetCurrentCompany=%5B%223768740%22%5D">
-            see_employees_link = self.browser.find_element_by_css_selector("a[data-control-name='topcard_see_all_employees']").get_attribute('href')
+            try:
+                # If there are employees, there should be an <a> to click
+                # <a data-control-name="topcard_see_all_employees" href="/search/results/people/?facetCurrentCompany=%5B%223768740%22%5D">
+                see_employees_link = self.browser.find_element_by_css_selector("a[data-control-name='topcard_see_all_employees']").get_attribute('href')
+            except:
+                return # there's no employees page to load
+
             print(f"calling load_page('{see_employees_link}') ...")
             self.load_page(see_employees_link)
 

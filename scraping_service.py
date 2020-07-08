@@ -17,7 +17,6 @@ def scrape_gen(db_polling_sleep_seconds=10):
     while not stopped:
         scrape = Scrape.next_unscraped()
         if scrape:
-            print(f"   scrape_gen: Got a new scrape for {scrape.scrapable_type} URL! url={scrape.url} flags={scrape.flags} (scrape.id={scrape.id})")
             yield scrape
         else:
             time.sleep(db_polling_sleep_seconds)
@@ -28,33 +27,33 @@ def scrape_forever(scrapers, p_args):
     for scrape in scrape_gen(db_polling_sleep_seconds=5):
         try:
             count += 1
-            print(f"\n\nBEGIN scraping {scrape.scrapable_type} URL {scrape.url} scrape.id={scrape.id}")
+            print(f"\n\nBEGIN scraping {scrape.scrapable_type} URL {scrape.url} scrape.id={scrape.id} flags={scrape.flags}")
             result = scrapers[scrape.scrapable_type].run(scrape.url)
 
             if result.error:
                 scrape.status = 1 if result.data else 2 # 1 for partial scrape, 2 for complete failure
-                print(f"failed scrape result.error={result.error}")
+                has_data_str = '(but result has data)' if result.data else ''
+                print(f"FAILED scrape {has_data_str} result.error={result.error}")
                 scrape.message = str(result.error)
-                if result.data: print(f"but result has data")
 
 
-            print(f"updating last_scraped for scrape.id={scrape.id} status={scrape.status} message={scrape.message} url={scrape.url}")
+            print(f"UPDATING last_scraped for scrape.id={scrape.id} status={scrape.status} message={scrape.message} url={scrape.url}")
             s_id = scrape.update_status_in_db()
-            print(f"updated scrape for s_id={s_id} url={scrape.url}")
+            print(f"UPDATED scrape for s_id={s_id} url={scrape.url}")
 
             person_or_company = result.data
             if person_or_company:
                 print(f"DONE scraping #{person_or_company.name}\n\n")
                 if not p_args.nosave:
-                    print(f"saving {scrape.scrapable_type} {person_or_company.name}")
+                    print(f"BEGIN saving {scrape.scrapable_type} {person_or_company.name}")
                     person_or_company.save_to_db()
 
-                if scrape.do_companies:
+                if scrape.do_companies():
                     for company_id in person_or_company.all_company_ids():
                         print(f"adding scrape (if necessary) for company company_id={company_id}")
                         Scrape.find_or_create_in_db('Company', company_id) # no flags for companies yet
 
-                if scrape.do_managers:
+                if scrape.do_managers():
                     for manager_id in person_or_company.all_manager_ids():
                         print(f"adding scrape (if necessary) for manager person_id={manager_id}")
                         Scrape.find_or_create_in_db('Person', manager_id) # no flags for managers
