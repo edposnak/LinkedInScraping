@@ -27,7 +27,10 @@ class LinkedinPersonScraper(LinkedinScraper):
             person.contact_info = self.scrape_contact_info()
             print(f"{person.name} {person.contact_info}")
 
+            # time.sleep(1) # these sleeps may be needed for scrolling to work properly
             self.scroll_to_bottom_to_load_all_content()
+            # time.sleep(1)
+
             print(f"scraping skills for {person.name}")
             person.skills = self.scrape_skills()
             print(f"{person.name} {person.skills}")
@@ -90,7 +93,9 @@ class LinkedinPersonScraper(LinkedinScraper):
 
 
         # dismiss the Contact Info modal
-        self.browser.execute_script("document.getElementsByClassName('artdeco-modal__dismiss')[0].click()")
+        # self.browser.execute_script("document.getElementsByClassName('artdeco-modal__dismiss')[0].click()")
+        dismiss_button = self.browser.find_element_by_class_name('artdeco-modal__dismiss')
+        ActionChains(self.browser).move_to_element(dismiss_button).click(dismiss_button).perform()
 
         return result
 
@@ -156,7 +161,7 @@ class LinkedinPersonScraper(LinkedinScraper):
     def scrape_single_position_job(self, job: Job, job_element: WebElement):
         summary_element = self.find_summary_element(job_element, 'pv-entity__summary-info')
 
-        job.company.name = summary_element.find_element_by_class_name('pv-entity__secondary-title').text.replace('Full-time', '').replace('Part-time', '').strip()
+        job.company.name = self.canonize_company_name(summary_element.find_element_by_class_name('pv-entity__secondary-title').text)
 
         position = Position()
         position.title = summary_element.find_element_by_class_name('t-16').text.strip()
@@ -174,7 +179,7 @@ class LinkedinPersonScraper(LinkedinScraper):
         # company_element = summary_element.find_element_by_class_name('t-16')
         company_element = summary_element.find_element_by_tag_name('h3')
         company_spans = company_element.find_elements_by_tag_name('span')
-        job.company.name = company_spans[1].text.replace('Full-time', '').replace('Part-time', '').strip()
+        job.company.name = self.canonize_company_name(company_spans[1].text)
 
         duration_element = summary_element.find_element_by_tag_name('h4')
         duration_spans = duration_element.find_elements_by_tag_name('span')
@@ -211,6 +216,11 @@ class LinkedinPersonScraper(LinkedinScraper):
                 raise JobSummaryNotFoundException(f"JobSummaryNotFoundException could not find element with class {summary_class_name}")
         return summary_element
 
+    def canonize_company_name(self, company_name):
+        result = company_name.strip()
+        for suffix in ['Full-time','Part-time','Freelance']:
+            if result.endswith(suffix): result = result[:-len(suffix)]
+        return result
 
     def scrape_date_range(self, dom_element):
         # <h4 class="pv-entity__date-range"> <span>Dates Employed</span> <span>May 2007 - Mar 2008</span>

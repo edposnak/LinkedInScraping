@@ -339,9 +339,11 @@ class Company:
     def update_new_info_in_db(self, company_id):
         # Update will blow away any existing values (but not employees)
 
-        rows = db_instance().exec_read('SELECT industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results FROM companies WHERE id = %s', (company_id,))
-        c_industry, c_size, c_headquarters, c_shareholder_type, c_founded, c_current_linkedin_employees, c_num_linkedin_results = rows[0]
+        rows = db_instance().exec_read('SELECT name, industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results FROM companies WHERE id = %s', (company_id,))
+        c_name, c_industry, c_size, c_headquarters, c_shareholder_type, c_founded, c_current_linkedin_employees, c_num_linkedin_results = rows[0]
         new_info = {}
+
+        if not c_name and self.name: new_info['name'] = self.name
         if not c_industry and self.industry: new_info['industry'] = self.industry
         if not c_size and self.size: new_info['size'] = self.size
         if not c_headquarters and self.headquarters: new_info['headquarters'] = self.headquarters
@@ -354,24 +356,16 @@ class Company:
             print(f"UPDATE Company {self.name} company_id={company_id} with {new_info}")
             updated_at = datetime.utcnow()
             sql = '''
-                UPDATE companies SET (industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results, updated_at) 
-                = (%s, %s, %s, %s, %s, %s, %s, %s)
+                UPDATE companies SET (name, industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results, updated_at) 
+                = (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 WHERE companies.id = %s
                 RETURNING id
             '''
-            params = (c_industry or self.industry, c_size or self.size, c_headquarters or self.headquarters, c_shareholder_type or self.shareholder_type, c_founded or self.founded,
+
+            params = (c_name or self.name, c_industry or self.industry, c_size or self.size, c_headquarters or self.headquarters, c_shareholder_type or self.shareholder_type, c_founded or self.founded,
                       c_current_linkedin_employees or self.current_linkedin_employees, c_num_linkedin_results or self.num_linkedin_results, updated_at, company_id)
             _ = db_instance().exec_write(sql, params)
 
-            # updated_at = datetime.utcnow()
-            # sql = '''
-            #     UPDATE companies SET (industry, size, headquarters, shareholder_type, founded, current_linkedin_employees, num_linkedin_results, updated_at)
-            #     = (%s, %s, %s, %s, %s, %s, %s, %s)
-            #     WHERE companies.id = %s
-            #     RETURNING id
-            # '''
-            # params = (self.industry, self.size, self.headquarters, self.shareholder_type, self.founded, self.current_linkedin_employees, self.num_linkedin_results, updated_at, company_id)
-            # _ = db_instance().exec_write(sql, params)
 
     @classmethod
     def find_or_create_in_db(cls, name, linkedin_url):
